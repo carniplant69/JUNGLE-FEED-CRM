@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Jungle Feed CRM</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#f5f6fa;color:#111827;font-family:'Inter',sans-serif;}
+::-webkit-scrollbar{width:6px;}
+::-webkit-scrollbar-track{background:#f3f4f6;}
+::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:3px;}
+select option{background:#fff;color:#111827;}
+button{cursor:pointer;font-family:'Inter',sans-serif;}
+input,select,textarea{font-family:'Inter',sans-serif;}
+button:hover{opacity:.88;}
+a{color:#16a34a;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useMemo,useRef} = React;
+
+const SB_URL = "https://oemulphojkquayjvxcvb.supabase.co";
+const SB_KEY = "sb_publishable_4S5c35xXkjgDjNb6JK93JA_00jYqzo5";
+
+const api = async (path, method="GET", body=null) => {
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, {
+    method,
+    headers:{
+      "apikey":SB_KEY,"Authorization":`Bearer ${SB_KEY}`,
+      "Content-Type":"application/json",
+      "Prefer":method==="POST"?"return=representation":method==="PATCH"?"return=representation":""
+    },
+    body:body?JSON.stringify(body):null
+  });
+  if(!r.ok){const e=await r.text();throw new Error(e);}
+  const t=await r.text(); return t?JSON.parse(t):null;
+};
+
+const uploadFacture = async (file, cmdId) => {
+  const ext = file.name.split('.').pop();
+  const path = `${cmdId}.${ext}`;
+  const r = await fetch(`${SB_URL}/storage/v1/object/factures/${path}`, {
+    method:"POST",
+    headers:{"apikey":SB_KEY,"Authorization":`Bearer ${SB_KEY}`,"Content-Type":file.type},
+    body:file
+  });
+  if(!r.ok){const e=await r.text();throw new Error(e);}
+  return `${SB_URL}/storage/v1/object/public/factures/${path}`;
+};
+
+const PRODS = [
+  {id:"P1",nom:"Anti-Thrips Jungle",cat:"Insecticide",prix:18.9},
+  {id:"P2",nom:"Anti-Moucherons Pro",cat:"Insecticide",prix:15.5},
+  {id:"P3",nom:"Traitement Cochenille",cat:"Insecticide",prix:16.9},
+  {id:"P4",nom:"Purin d'Ortie Bio",cat:"Engrais",prix:12.5},
+  {id:"P5",nom:"Engrais Universel 500ml",cat:"Engrais",prix:14.9},
+  {id:"P6",nom:"Tonique Plantes Vertes",cat:"Tonique",prix:19.9},
+  {id:"P7",nom:"Kit Accessoires Pro",cat:"Accessoires",prix:29.9},
+  {id:"P8",nom:"Purin de Consoude",cat:"Engrais",prix:13.5},
+];
+
+const SEGS_KEY = "jf_segments";
+const loadSegs = () => { try { return JSON.parse(localStorage.getItem(SEGS_KEY)) || ["Fleuriste","Jardinerie","Pépinière","Distributeur","Revendeur","Grande surface","Particulier","Autre"]; } catch(e){ return ["Fleuriste","Jardinerie","Pépinière","Distributeur","Revendeur","Grande surface","Particulier","Autre"]; }};
+const saveSegs = v => localStorage.setItem(SEGS_KEY, JSON.stringify(v));
+
+const eur  = n => new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(n||0);
+const dfmt = d => d?new Date(d).toLocaleDateString("fr-FR"):"—";
+const now  = () => new Date().toISOString().slice(0,10);
+
+const SC = {
+  "Livré":"#16a34a","En cours":"#b45309","En attente":"#c2410c",
+  "Annulé":"#dc2626","À faire":"#c2410c","Fait":"#16a34a","Planifié":"#1d4ed8"
+};
+const SEG_COLORS = ["#7c3aed","#0369a1","#0f766e","#b45309","#be185d","#4338ca","#059669","#dc2626"];
+
+// ── Micro composants ──────────────────────────────────────────────────────────
+const Badge = ({v,c="#6b7280"}) => (
+  <span style={{background:c+"18",color:c,border:`1px solid ${c}35`,borderRadius:5,
+    padding:"2px 8px",fontSize:11,fontWeight:600,letterSpacing:.2,whiteSpace:"nowrap"}}>{v}</span>
+);
+
+const Btn = ({v="p",onClick,children,style={}}) => (
+  <button onClick={onClick} style={{
+    display:"inline-flex",alignItems:"center",gap:5,padding:"8px 14px",borderRadius:7,
+    fontWeight:600,fontSize:13,
+    border:v==="s"?"1px solid #d1d5db":"none",
+    background:v==="p"?"#16a34a":v==="g"?"transparent":v==="red"?"#dc2626":"#fff",
+    color:v==="p"?"#fff":v==="g"?"#6b7280":v==="red"?"#fff":"#374151",
+    boxShadow:v==="s"?"0 1px 2px rgba(0,0,0,.06)":"none",...style
+  }}>{children}</button>
+);
+
+const Inp = ({value,onChange,placeholder,type="text",style={}}) => (
+  <input type={type} value={value} onChange={onChange} placeholder={placeholder||""}
+    style={{background:"#fff",border:"1px solid #d1d5db",borderRadius:7,padding:"9px 12px",
+      color:"#111827",fontSize:13,width:"100%",outline:"none",
+      boxShadow:"inset 0 1px 2px rgba(0,0,0,.04)",...style}}/>
+);
+
+const Sel = ({value,onChange,children,style={}}) => (
+  <select value={value} onChange={onChange}
+    style={{background:"#fff",border:"1px solid #d1d5db",borderRadius:7,padding:"9px 12px",
+      color:"#111827",fontSize:13,width:"100%",outline:"none",
+      boxShadow:"inset 0 1px 2px rgba(0,0,0,.04)",...style}}>
+    {children}
+  </select>
+);
+
+const Fld = ({label,children}) => (
+  <div style={{marginBottom:13}}>
+    <label style={{fontSize:11,color:"#6b7280",fontWeight:600,textTransform:"uppercase",
+      letterSpacing:.7,marginBottom:5,display:"block"}}>{label}</label>
+    {children}
+  </div>
+);
+
+const Card = ({children,style={}}) => (
+  <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:12,
+    padding:"18px 22px",marginBottom:14,boxShadow:"0 1px 3px rgba(0,0,0,.05)",...style}}>
+    {children}
+  </div>
+);
+
+const SecT = ({children,style={}}) => (
+  <div style={{fontSize:11,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",
+    letterSpacing:1.5,marginBottom:12,...style}}>{children}</div>
+);
+
+const TH = ({children}) => (
+  <th style={{textAlign:"left",padding:"9px 13px",fontSize:11,color:"#6b7280",fontWeight:600,
+    textTransform:"uppercase",letterSpacing:.7,borderBottom:"2px solid #f3f4f6",
+    background:"#fafafa",whiteSpace:"nowrap"}}>{children}</th>
+);
+
+const TD = ({children,style={}}) => (
+  <td style={{padding:"10px 13px",fontSize:13,borderBottom:"1px solid #f9fafb",
+    verticalAlign:"middle",...style}}>{children}</td>
+);
+
+const Ovl = ({children,onClose,wide=false}) => (
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:999,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+    onClick={onClose}>
+    <div style={{background:"#fff",borderRadius:14,padding:"24px 28px",
+      width:wide?600:490,maxHeight:"92vh",overflowY:"auto",
+      boxShadow:"0 24px 60px rgba(0,0,0,.18)"}}
+      onClick={e=>e.stopPropagation()}>
+      {children}
+    </div>
+  </div>
+);
+
+const MH = ({title,onClose}) => (
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,paddingBottom:14,borderBottom:"1px solid #f3f4f6"}}>
+    <span style={{fontSize:16,fontWeight:700,color:"#111827"}}>{title}</span>
+    <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,color:"#9ca3af",cursor:"pointer",lineHeight:1,padding:"0 2px"}}>×</button>
+  </div>
+);
+
+// ── APP ───────────────────────────────────────────────────────────────────────
+function App(){
+  const [pg,setPg]       = useState("dash");
+  const [clients,setC]   = useState([]);
+  const [cmds,setCmds]   = useState([]);
+  const [rels,setRels]   = useState([]);
+  const [loading,setLd]  = useState(true);
+  const [dbOk,setDbOk]   = useState(false);
+  const [q,setQ]         = useState("");
+  const [modal,setModal] = useState(null);
+  const [toast,setToast] = useState(null);
+  const [prog,setProg]   = useState(null);
+  const [segs,setSegs]   = useState(loadSegs());
+  const fRef = useRef();
+
+  const ok  = msg => { setToast({msg,t:"ok"});  setTimeout(()=>setToast(null),3000); };
+  const err = msg => { setToast({msg,t:"err"}); setTimeout(()=>setToast(null),3500); };
+  const cls = ()  => setModal(null);
+
+  const load = async () => {
+    setLd(true);
+    try {
+      const [c,cmd,r] = await Promise.all([
+        api("clients?order=nom.asc&limit=2000"),
+        api("commandes?order=date.desc&limit=2000"),
+        api("relances?order=date.asc&limit=2000"),
+      ]);
+      setC(c||[]); setCmds(cmd||[]); setRels(r||[]);
+      setDbOk(true);
+    } catch(e){ setDbOk(false); }
+    setLd(false);
+  };
+
+  useEffect(()=>{ load(); },[]);
+
+  const today   = now();
+  const caTotal = useMemo(()=>cmds.filter(c=>c.statut!=="Annulé").reduce((s,c)=>s+(c.total||0),0),[cmds]);
+  const caMois  = useMemo(()=>{
+    const m=new Date().getMonth(),y=new Date().getFullYear();
+    return cmds.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y&&c.statut!=="Annulé";}).reduce((s,c)=>s+(c.total||0),0);
+  },[cmds]);
+  const caJour  = useMemo(()=>cmds.filter(c=>c.date?.slice(0,10)===today&&c.statut!=="Annulé").reduce((s,c)=>s+(c.total||0),0),[cmds]);
+  const urgents = rels.filter(r=>r.statut==="À faire"&&new Date(r.date)<=new Date(Date.now()+7*864e5));
+  const topP    = useMemo(()=>{
+    const a={};
+    cmds.filter(c=>c.statut!=="Annulé").forEach(cmd=>(cmd.produits||[]).forEach(({prod_id,qte})=>{a[prod_id]=(a[prod_id]||0)+qte;}));
+    return Object.entries(a).sort((a,b)=>b[1]-a[1]).map(([id,qte])=>({p:PRODS.find(x=>x.id===id),qte})).filter(x=>x.p);
+  },[cmds]);
+
+  const getC = id => clients.find(c=>c.id===id);
+  const segColor = seg => SEG_COLORS[segs.indexOf(seg) % SEG_COLORS.length] || "#6b7280";
+
+  // ── Import CSV ──────────────────────────────────────────────────────────────
+  const importCSV = async file => {
+    const text = await file.text();
+    const lines = text.split("\n").filter(Boolean);
+    const pr = row => { const p=[];let q=false,c=""; for(const ch of row){if(ch==='"'){q=!q;continue;}if(ch===","&&!q){p.push(c.trim());c="";continue;}c+=ch;} p.push(c.trim()); return p; };
+    const headers = pr(lines[0]).map(h=>h.replace(/"/g,"").trim());
+    const col = (parts,n) => { const i=headers.indexOf(n); return i>=0?(parts[i]||"").trim():""; };
+    const rows = lines.slice(1).filter(l=>l.trim());
+    let done=0,imp=0;
+    setProg({done:0,total:rows.length,imp:0});
+    for(let i=0;i<rows.length;i+=20){
+      const batch=rows.slice(i,i+20),ins=[];
+      for(const row of batch){
+        const parts=pr(row),type=col(parts,"Type");
+        if(type!=="Entreprise"&&type!=="Personne"){done++;continue;}
+        const nom=col(parts,"Nom")||col(parts,"Entreprise")||"";
+        if(!nom||nom==="Capsule"||nom==="JUNGLE FEED"){done++;continue;}
+        const email=col(parts,"E-mail")||col(parts,"Adresse électronique")||"";
+        const tel=col(parts,"Numéro de téléphone")||col(parts,"Mobile Téléphone")||col(parts,"Work Téléphone")||"";
+        const ville=col(parts,"Ville")||col(parts,"Ville de l'adresse professionnelle")||"";
+        const contact=type==="Personne"?(col(parts,"Prénom")+" "+col(parts,"Nom de famille")).trim():"";
+        const etiq=col(parts,"Étiquettes")||"";
+        const seg=segs.find(s=>etiq.toLowerCase().includes(s.toLowerCase()))||segs[0]||"Autre";
+        ins.push({nom,contact:contact||col(parts,"Fonction")||"",email,tel,ville,segment:seg,notes:etiq,ca_total:0});
+        done++;imp++;
+      }
+      if(ins.length>0){try{await api("clients","POST",ins);}catch(e){}}
+      setProg({done,total:rows.length,imp});
+      await new Promise(r=>setTimeout(r,50));
+    }
+    await load(); setProg(null); ok(`✅ ${imp} contacts importés !`); cls();
+  };
+
+  // ── CRUD ────────────────────────────────────────────────────────────────────
+  const saveClient = async d => {
+    try{d.id?await api(`clients?id=eq.${d.id}`,"PATCH",d):await api("clients","POST",{...d,ca_total:0});await load();ok("Client enregistré ✓");cls();}
+    catch(e){err(e.message);}
+  };
+
+  const saveCmd = async (d, factureFile) => {
+    try{
+      const total=(d.produits||[]).reduce((s,l)=>{const p=PRODS.find(x=>x.id===l.prod_id);return s+(p?p.prix*l.qte:0);},0);
+      let facture_url = d.facture_url||null;
+      const rows = await api("commandes","POST",{...d,total,date:today,facture_url});
+      const newId = rows?.[0]?.id;
+      if(factureFile&&newId){
+        try{ facture_url = await uploadFacture(factureFile,newId); await api(`commandes?id=eq.${newId}`,"PATCH",{facture_url}); }
+        catch(e){ console.warn("Upload facture:",e.message); }
+      }
+      const cl=clients.find(c=>c.id===d.client_id);
+      if(cl) await api(`clients?id=eq.${cl.id}`,"PATCH",{ca_total:(cl.ca_total||0)+total});
+      await load(); ok("Commande enregistrée ✓"); cls();
+    }catch(e){err(e.message);}
+  };
+
+  const saveRel = async d => {
+    try{await api("relances","POST",{...d,statut:"À faire"});await load();ok("Relance créée ✓");cls();}
+    catch(e){err(e.message);}
+  };
+
+  const doneRel = async id => {
+    try{await api(`relances?id=eq.${id}`,"PATCH",{statut:"Fait"});setRels(p=>p.map(r=>r.id===id?{...r,statut:"Fait"}:r));ok("Relance effectuée ✓");}
+    catch(e){}
+  };
+
+  const updateSegs = newSegs => { setSegs(newSegs); saveSegs(newSegs); };
+
+  // ── Écran DB non prête ──────────────────────────────────────────────────────
+  if(!dbOk&&!loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#f5f6fa",padding:30}}>
+      <Card style={{maxWidth:560,width:"100%"}}>
+        <div style={{fontSize:22,fontWeight:800,color:"#16a34a",marginBottom:14}}>🌿 Jungle Feed CRM — Configuration</div>
+        <p style={{fontSize:13,color:"#6b7280",lineHeight:1.8,marginBottom:14}}>
+          Tables introuvables. Allez dans <strong style={{color:"#16a34a"}}>Supabase → SQL Editor → New Query</strong>, collez ce SQL et cliquez <strong style={{color:"#16a34a"}}>Run</strong> :
+        </p>
+        <pre style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"12px 14px",fontSize:11,color:"#374151",overflowX:"auto",whiteSpace:"pre-wrap",marginBottom:16,lineHeight:1.7}}>{`create table if not exists clients (
+  id uuid primary key default gen_random_uuid(),
+  nom text not null, contact text, email text, tel text,
+  ville text, segment text default 'Fleuriste', notes text,
+  ca_total numeric default 0, created_at timestamptz default now()
+);
+create table if not exists commandes (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid references clients(id),
+  date date default current_date, statut text default 'En attente',
+  produits jsonb default '[]', total numeric default 0,
+  notes text, facture_url text, created_at timestamptz default now()
+);
+create table if not exists relances (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid references clients(id),
+  date date, objet text, statut text default 'À faire',
+  priorite text default 'Normale', created_at timestamptz default now()
+);
+-- Storage bucket pour factures (exécuter séparément si besoin) :
+-- insert into storage.buckets (id,name,public) values ('factures','factures',true) on conflict do nothing;`}</pre>
+        <Btn onClick={load}>▶ J'ai exécuté le SQL — Relancer</Btn>
+      </Card>
+    </div>
+  );
+
+  if(loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#f5f6fa",flexDirection:"column",gap:10}}>
+      <div style={{fontSize:22,fontWeight:800,color:"#16a34a"}}>🌿 Jungle Feed CRM</div>
+      <div style={{fontSize:13,color:"#6b7280"}}>Connexion en cours...</div>
+    </div>
+  );
+
+  // ── PAGES ──────────────────────────────────────────────────────────────────
+  const Dash = () => {
+    const maxQ = topP[0]?.qte||1;
+    return <>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:18}}>
+        {[
+          {l:"CA Aujourd'hui",  v:eur(caJour),  c:"#16a34a", s:new Date().toLocaleDateString("fr-FR")},
+          {l:"CA "+new Date().toLocaleString("fr-FR",{month:"long"}), v:eur(caMois), c:"#1d4ed8", s:"Mois en cours"},
+          {l:"CA Total",        v:eur(caTotal), c:"#7c3aed", s:"Toutes périodes"},
+          {l:"Relances urgentes",v:urgents.length, c:"#c2410c", s:"7 prochains jours"},
+        ].map(({l,v,c,s})=>(
+          <div key={l} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:12,
+            padding:"16px 18px",borderLeft:`4px solid ${c}`,boxShadow:"0 1px 3px rgba(0,0,0,.05)"}}>
+            <div style={{fontSize:11,color:"#6b7280",fontWeight:600,textTransform:"uppercase",letterSpacing:.8,marginBottom:6}}>{l}</div>
+            <div style={{fontSize:24,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:11,color:"#9ca3af",marginTop:3}}>{s}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {[["👥",clients.length,"clients"],["📦",cmds.length,"commandes"],["📅",rels.filter(r=>r.statut!=="Fait").length,"relances actives"]].map(([ico,n,l])=>(
+          <div key={l} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,
+            padding:"7px 14px",fontSize:13,color:"#374151",boxShadow:"0 1px 2px rgba(0,0,0,.04)"}}>
+            {ico} <strong style={{color:"#111827"}}>{n}</strong> <span style={{color:"#6b7280"}}>{l}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+        <Card>
+          <SecT>🌿 Top Produits</SecT>
+          {topP.length===0
+            ? <div style={{color:"#9ca3af",fontSize:13}}>Aucune commande encore</div>
+            : topP.slice(0,6).map(({p,qte})=>(
+              <div key={p.id} style={{marginBottom:11}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:4}}>
+                  <span style={{color:"#374151",fontWeight:500}}>{p.nom}</span>
+                  <span style={{color:"#16a34a",fontWeight:700}}>{qte} u.</span>
+                </div>
+                <div style={{height:6,borderRadius:3,background:"#f3f4f6"}}>
+                  <div style={{height:"100%",width:Math.round(qte/(topP[0]?.qte||1)*100)+"%",background:"#16a34a",borderRadius:3}}/>
+                </div>
+              </div>
+            ))}
+        </Card>
+        <Card>
+          <SecT>⏰ Relances urgentes</SecT>
+          {urgents.length===0
+            ? <div style={{color:"#9ca3af",fontSize:13}}>✅ Aucune relance urgente</div>
+            : urgents.map(r=>{
+              const cl=getC(r.client_id);
+              return <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid #f3f4f6"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,color:"#111827"}}>{cl?.nom||"—"}</div>
+                  <div style={{fontSize:12,color:"#6b7280",marginTop:2}}>{r.objet}</div>
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:12,color:"#c2410c",fontWeight:500}}>{dfmt(r.date)}</span>
+                  <Btn v="g" onClick={()=>doneRel(r.id)} style={{padding:"3px 8px",color:"#16a34a"}}>✓</Btn>
+                </div>
+              </div>;
+            })}
+        </Card>
+      </div>
+
+      <Card>
+        <SecT>📦 Dernières commandes</SecT>
+        {cmds.length===0
+          ? <div style={{color:"#9ca3af",fontSize:13}}>Aucune commande</div>
+          : <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr><TH>Client</TH><TH>Date</TH><TH>Total</TH><TH>Statut</TH><TH>Facture</TH></tr></thead>
+              <tbody>{cmds.slice(0,6).map(c=>(
+                <tr key={c.id}>
+                  <TD style={{fontWeight:600,color:"#111827"}}>{getC(c.client_id)?.nom||"—"}</TD>
+                  <TD style={{color:"#6b7280"}}>{dfmt(c.date)}</TD>
+                  <TD style={{fontWeight:700,color:"#16a34a"}}>{eur(c.total)}</TD>
+                  <TD><Badge v={c.statut} c={SC[c.statut]||"#6b7280"}/></TD>
+                  <TD>{c.facture_url?<a href={c.facture_url} target="_blank" style={{color:"#1d4ed8",fontSize:12}}>📎 Voir</a>:<span style={{color:"#d1d5db",fontSize:12}}>—</span>}</TD>
+                </tr>
+              ))}</tbody>
+            </table>}
+      </Card>
+    </>;
+  };
+
+  const PageClients = () => {
+    const fl = clients.filter(c=>!q||c.nom?.toLowerCase().includes(q.toLowerCase())||c.ville?.toLowerCase().includes(q.toLowerCase())||c.email?.toLowerCase().includes(q.toLowerCase()));
+    return <Card>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr><TH>Entreprise</TH><TH>Contact</TH><TH>Email</TH><TH>Ville</TH><TH>Segment</TH><TH>CA Total</TH><TH></TH></tr></thead>
+        <tbody>{fl.map(c=>(
+          <tr key={c.id} style={{cursor:"pointer"}} onClick={()=>setModal({t:"cdet",d:c})}>
+            <TD style={{fontWeight:600,color:"#111827"}}>{c.nom}</TD>
+            <TD style={{color:"#374151"}}>{c.contact||"—"}</TD>
+            <TD style={{fontSize:12,color:"#6b7280"}}>{c.email||"—"}</TD>
+            <TD style={{color:"#374151"}}>{c.ville||"—"}</TD>
+            <TD><Badge v={c.segment||"—"} c={segColor(c.segment)}/></TD>
+            <TD style={{fontWeight:700,color:"#16a34a"}}>{eur(c.ca_total)}</TD>
+            <TD><Btn v="s" onClick={e=>{e.stopPropagation();setModal({t:"rel",d:{client_id:c.id}});}} style={{padding:"4px 10px",fontSize:11}}>Relancer</Btn></TD>
+          </tr>
+        ))}</tbody>
+      </table>
+      {fl.length===0&&<div style={{padding:24,textAlign:"center",color:"#9ca3af"}}>Aucun client trouvé</div>}
+    </Card>;
+  };
+
+  const PageCmds = () => {
+    const fl = cmds.filter(c=>!q||getC(c.client_id)?.nom?.toLowerCase().includes(q.toLowerCase()));
+    return <Card>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr><TH>Client</TH><TH>Date</TH><TH>Produits</TH><TH>Total</TH><TH>Statut</TH><TH>Facture</TH></tr></thead>
+        <tbody>{fl.map(c=>{
+          const pStr=(c.produits||[]).map(p=>{const pr=PRODS.find(x=>x.id===p.prod_id);return pr?`${pr.nom} ×${p.qte}`:""}).filter(Boolean).join(", ");
+          return <tr key={c.id}>
+            <TD style={{fontWeight:600,color:"#111827"}}>{getC(c.client_id)?.nom||"—"}</TD>
+            <TD style={{color:"#6b7280"}}>{dfmt(c.date)}</TD>
+            <TD style={{fontSize:12,color:"#6b7280",maxWidth:200}}>{pStr||"—"}</TD>
+            <TD style={{fontWeight:700,color:"#16a34a"}}>{eur(c.total)}</TD>
+            <TD><Badge v={c.statut} c={SC[c.statut]||"#6b7280"}/></TD>
+            <TD>
+              {c.facture_url
+                ? <a href={c.facture_url} target="_blank" style={{color:"#1d4ed8",fontSize:12,fontWeight:500}}>📎 Télécharger</a>
+                : <Btn v="s" style={{padding:"3px 9px",fontSize:11}} onClick={()=>setModal({t:"upload_facture",d:c})}>+ Facture</Btn>}
+            </TD>
+          </tr>;
+        })}</tbody>
+      </table>
+    </Card>;
+  };
+
+  const PageRels = () => {
+    const todo = rels.filter(r=>r.statut!=="Fait");
+    const done = rels.filter(r=>r.statut==="Fait");
+    const Row = ({r}) => { const cl=getC(r.client_id); return <tr>
+      <TD style={{fontWeight:600,color:"#111827"}}>{cl?.nom||"—"}</TD>
+      <TD style={{color:"#374151"}}>{r.objet}</TD>
+      <TD style={{color:"#6b7280"}}>{dfmt(r.date)}</TD>
+      <TD><Badge v={r.priorite||"Normale"} c={r.priorite==="Haute"?"#c2410c":"#1d4ed8"}/></TD>
+      <TD><Badge v={r.statut} c={SC[r.statut]||"#6b7280"}/></TD>
+      <TD>{r.statut!=="Fait"&&<Btn v="s" onClick={()=>doneRel(r.id)} style={{padding:"4px 10px",fontSize:11}}>✓ Fait</Btn>}</TD>
+    </tr>; };
+    return <>
+      <Card>
+        <SecT>À traiter ({todo.length})</SecT>
+        {todo.length===0
+          ? <div style={{color:"#9ca3af",fontSize:13}}>✅ Tout est traité</div>
+          : <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr><TH>Client</TH><TH>Objet</TH><TH>Date</TH><TH>Priorité</TH><TH>Statut</TH><TH></TH></tr></thead>
+              <tbody>{todo.map((r,i)=><Row key={i} r={r}/>)}</tbody>
+            </table>}
+      </Card>
+      {done.length>0&&<Card>
+        <SecT>Effectuées ({done.length})</SecT>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr><TH>Client</TH><TH>Objet</TH><TH>Date</TH><TH>Priorité</TH><TH>Statut</TH><TH></TH></tr></thead>
+          <tbody>{done.slice(0,20).map((r,i)=><Row key={i} r={r}/>)}</tbody>
+        </table>
+      </Card>}
+    </>;
+  };
+
+  const PageProds = () => {
+    const caP = useMemo(()=>{const a={};cmds.filter(c=>c.statut!=="Annulé").forEach(cmd=>(cmd.produits||[]).forEach(({prod_id,qte})=>{const p=PRODS.find(x=>x.id===prod_id);a[prod_id]=(a[prod_id]||0)+(p?p.prix*qte:0);}));return a;},[]);
+    const maxQ = topP[0]?.qte||1;
+    return <Card>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr><TH>Produit</TH><TH>Catégorie</TH><TH>Prix</TH><TH>Qté vendue</TH><TH>CA généré</TH><TH>Popularité</TH></tr></thead>
+        <tbody>{PRODS.map(p=>{
+          const qte=topP.find(x=>x.p?.id===p.id)?.qte||0;
+          return <tr key={p.id}>
+            <TD style={{fontWeight:600,color:"#111827"}}>{p.nom}</TD>
+            <TD><Badge v={p.cat} c="#0369a1"/></TD>
+            <TD style={{fontFamily:"monospace",color:"#374151"}}>{eur(p.prix)}</TD>
+            <TD style={{fontWeight:700,color:"#16a34a"}}>{qte}</TD>
+            <TD style={{fontWeight:700,color:"#374151"}}>{eur(caP[p.id]||0)}</TD>
+            <TD style={{width:130}}>
+              <div style={{height:6,borderRadius:3,background:"#f3f4f6"}}>
+                <div style={{height:"100%",width:Math.round(qte/maxQ*100)+"%",background:"#16a34a",borderRadius:3}}/>
+              </div>
+            </TD>
+          </tr>;
+        })}</tbody>
+      </table>
+    </Card>;
+  };
+
+  const PageParams = () => {
+    const [newSeg,setNewSeg] = useState("");
+    const add = () => { if(!newSeg.trim()) return; const ns=[...segs,newSeg.trim()]; updateSegs(ns); setNewSeg(""); ok("Segment ajouté ✓"); };
+    const del = s => { if(segs.length<=1){err("Il faut au moins un segment");return;} updateSegs(segs.filter(x=>x!==s)); };
+    return <>
+      <Card>
+        <SecT>⚙️ Segments clients</SecT>
+        <p style={{fontSize:13,color:"#6b7280",marginBottom:16,lineHeight:1.6}}>
+          Ces segments apparaissent dans les fiches clients. Ajoutez, supprimez ou réorganisez selon vos besoins.
+        </p>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:18}}>
+          {segs.map((s,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:segColor(s)+"15",
+              border:`1px solid ${segColor(s)}40`,borderRadius:7,padding:"5px 10px"}}>
+              <span style={{fontSize:13,fontWeight:600,color:segColor(s)}}>{s}</span>
+              <button onClick={()=>del(s)} style={{background:"none",border:"none",color:segColor(s),
+                cursor:"pointer",fontSize:14,lineHeight:1,padding:0,opacity:.6}}>×</button>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <Inp value={newSeg} onChange={e=>setNewSeg(e.target.value)} placeholder="Nouveau segment..." style={{maxWidth:240}}
+            onKeyDown={e=>e.key==="Enter"&&add()}/>
+          <Btn onClick={add}>+ Ajouter</Btn>
+        </div>
+      </Card>
+      <Card>
+        <SecT>📎 Factures</SecT>
+        <p style={{fontSize:13,color:"#6b7280",lineHeight:1.6}}>
+          Les factures sont stockées dans Supabase Storage.<br/>
+          Pour activer cette fonctionnalité, exécutez ce SQL dans Supabase :
+        </p>
+        <pre style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:7,padding:"10px 14px",fontSize:12,color:"#374151",marginTop:10}}>
+          {`insert into storage.buckets (id,name,public)\nvalues ('factures','factures',true)\non conflict do nothing;`}
+        </pre>
+      </Card>
+    </>;
+  };
+
+  // ── MODALES ────────────────────────────────────────────────────────────────
+  const MClientNew = () => {
+    const [d,setD] = useState({nom:"",contact:"",email:"",tel:"",ville:"",segment:segs[0]||"",notes:""});
+    const u = k => e => setD(p=>({...p,[k]:e.target.value}));
+    return <Ovl onClose={cls}>
+      <MH title="Nouveau client" onClose={cls}/>
+      {[["Entreprise / Nom","nom"],["Contact","contact"],["Email","email"],["Téléphone","tel"],["Ville","ville"]].map(([l,k])=>(
+        <Fld key={k} label={l}><Inp value={d[k]} onChange={u(k)}/></Fld>
+      ))}
+      <Fld label="Segment"><Sel value={d.segment} onChange={u("segment")}>
+        {segs.map(s=><option key={s}>{s}</option>)}
+      </Sel></Fld>
+      <Fld label="Notes"><textarea value={d.notes} onChange={u("notes")}
+        style={{background:"#fff",border:"1px solid #d1d5db",borderRadius:7,padding:"9px 12px",
+          color:"#111827",fontSize:13,width:"100%",outline:"none",height:60,resize:"vertical"}}/></Fld>
+      <Btn onClick={()=>saveClient(d)}>Créer le client</Btn>
+    </Ovl>;
+  };
+
+  const MCmdNew = () => {
+    const [d,setD]   = useState({client_id:"",statut:"En attente",produits:[{prod_id:"P1",qte:1}],notes:""});
+    const [file,setFile] = useState(null);
+    const fileRef2 = useRef();
+    const total = (d.produits||[]).reduce((s,l)=>{const p=PRODS.find(x=>x.id===l.prod_id);return s+(p?p.prix*l.qte:0);},0);
+    return <Ovl onClose={cls}>
+      <MH title="Nouvelle commande" onClose={cls}/>
+      <Fld label="Client"><Sel value={d.client_id} onChange={e=>setD(p=>({...p,client_id:e.target.value}))}>
+        <option value="">Choisir un client...</option>
+        {clients.sort((a,b)=>a.nom.localeCompare(b.nom)).map(c=><option key={c.id} value={c.id}>{c.nom}</option>)}
+      </Sel></Fld>
+      <Fld label="Statut"><Sel value={d.statut} onChange={e=>setD(p=>({...p,statut:e.target.value}))}>
+        {["En attente","En cours","Livré"].map(v=><option key={v}>{v}</option>)}
+      </Sel></Fld>
+      <Fld label="Produits">
+        {d.produits.map((l,i)=>(
+          <div key={i} style={{display:"flex",gap:7,marginBottom:7}}>
+            <Sel style={{flex:2}} value={l.prod_id} onChange={e=>setD(p=>{const ls=[...p.produits];ls[i].prod_id=e.target.value;return{...p,produits:ls};})}>
+              {PRODS.map(p=><option key={p.id} value={p.id}>{p.nom}</option>)}
+            </Sel>
+            <Inp type="number" style={{width:70}} value={l.qte} onChange={e=>setD(p=>{const ls=[...p.produits];ls[i].qte=+e.target.value;return{...p,produits:ls};})}/>
+            {d.produits.length>1&&<Btn v="g" onClick={()=>setD(p=>({...p,produits:p.produits.filter((_,j)=>j!==i)}))} style={{padding:"0 8px",color:"#dc2626"}}>×</Btn>}
+          </div>
+        ))}
+        <Btn v="s" onClick={()=>setD(p=>({...p,produits:[...p.produits,{prod_id:"P1",qte:1}]}))} style={{fontSize:12}}>+ Ligne</Btn>
+      </Fld>
+      <Fld label="Notes"><Inp value={d.notes} onChange={e=>setD(p=>({...p,notes:e.target.value}))} placeholder="Notes internes..."/></Fld>
+      <Fld label="📎 Facture (PDF, image)">
+        <input ref={fileRef2} type="file" accept=".pdf,.png,.jpg,.jpeg" style={{display:"none"}} onChange={e=>setFile(e.target.files[0])}/>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <Btn v="s" onClick={()=>fileRef2.current?.click()} style={{fontSize:12}}>📂 Choisir un fichier</Btn>
+          {file&&<span style={{fontSize:12,color:"#16a34a",fontWeight:500}}>✓ {file.name}</span>}
+          {!file&&<span style={{fontSize:12,color:"#9ca3af"}}>Aucun fichier sélectionné</span>}
+        </div>
+      </Fld>
+      <div style={{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"10px 14px",marginBottom:16}}>
+        <span style={{fontSize:14,color:"#374151"}}>Total : </span>
+        <strong style={{color:"#16a34a",fontSize:16}}>{eur(total)}</strong>
+      </div>
+      <Btn onClick={()=>saveCmd(d,file)}>Enregistrer la commande</Btn>
+    </Ovl>;
+  };
+
+  const MRelNew = () => {
+    const [d,setD] = useState({client_id:modal?.d?.client_id||"",date:"",objet:"",priorite:"Normale"});
+    const u = k => e => setD(p=>({...p,[k]:e.target.value}));
+    return <Ovl onClose={cls}>
+      <MH title="Nouvelle relance" onClose={cls}/>
+      <Fld label="Client"><Sel value={d.client_id} onChange={u("client_id")}>
+        <option value="">Choisir...</option>
+        {clients.sort((a,b)=>a.nom.localeCompare(b.nom)).map(c=><option key={c.id} value={c.id}>{c.nom}</option>)}
+      </Sel></Fld>
+      <Fld label="Objet"><Inp value={d.objet} onChange={u("objet")} placeholder="Ex: Suivi commande, Proposition..."/></Fld>
+      <Fld label="Date"><Inp type="date" value={d.date} onChange={u("date")}/></Fld>
+      <Fld label="Priorité"><Sel value={d.priorite} onChange={u("priorite")}>
+        <option>Normale</option><option>Haute</option>
+      </Sel></Fld>
+      <Btn onClick={()=>saveRel(d)}>Créer la relance</Btn>
+    </Ovl>;
+  };
+
+  const MCDet = () => {
+    const c = modal?.d; if(!c) return null;
+    const cCmds = cmds.filter(x=>x.client_id===c.id);
+    return <Ovl onClose={cls} wide>
+      <MH title={c.nom} onClose={cls}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
+        {[{l:"CA Total",v:eur(c.ca_total),c:"#16a34a"},{l:"Commandes",v:cCmds.length,c:"#1d4ed8"},{l:"Segment",v:c.segment||"—",c:segColor(c.segment)}].map(({l,v,c:col})=>(
+          <div key={l} style={{background:"#f9fafb",borderRadius:9,padding:"10px 14px",border:"1px solid #f3f4f6"}}>
+            <div style={{fontSize:11,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.7,fontWeight:600}}>{l}</div>
+            <div style={{fontSize:18,fontWeight:800,color:col,marginTop:4}}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:13,color:"#6b7280",marginBottom:10,lineHeight:1.7}}>
+        📧 {c.email||"—"} &nbsp;|&nbsp; 📞 {c.tel||"—"} &nbsp;|&nbsp; 📍 {c.ville||"—"}
+      </div>
+      {c.notes&&<div style={{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#166534",marginBottom:14}}>🏷️ {c.notes}</div>}
+      {cCmds.length>0&&<>
+        <SecT style={{marginTop:10}}>Commandes récentes</SecT>
+        {cCmds.slice(0,5).map(cmd=>(
+          <div key={cmd.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f3f4f6",fontSize:13}}>
+            <span style={{color:"#6b7280"}}>{dfmt(cmd.date)}</span>
+            <span style={{fontWeight:700,color:"#16a34a"}}>{eur(cmd.total)}</span>
+            <Badge v={cmd.statut} c={SC[cmd.statut]||"#6b7280"}/>
+            {cmd.facture_url
+              ? <a href={cmd.facture_url} target="_blank" style={{color:"#1d4ed8",fontSize:12}}>📎 Facture</a>
+              : <span style={{color:"#d1d5db",fontSize:12}}>Pas de facture</span>}
+          </div>
+        ))}
+      </>}
+      <div style={{display:"flex",gap:9,marginTop:18}}>
+        <Btn onClick={()=>setModal({t:"rel",d:{client_id:c.id}})}>+ Relance</Btn>
+        <Btn v="s" onClick={()=>setModal({t:"cmd"})}>+ Commande</Btn>
+      </div>
+    </Ovl>;
+  };
+
+  const MUploadFacture = () => {
+    const cmd = modal?.d; if(!cmd) return null;
+    const [file,setFile] = useState(null);
+    const [uploading,setUploading] = useState(false);
+    const fileRef3 = useRef();
+    const upload = async () => {
+      if(!file) return;
+      setUploading(true);
+      try {
+        const url = await uploadFacture(file,cmd.id);
+        await api(`commandes?id=eq.${cmd.id}`,"PATCH",{facture_url:url});
+        await load(); ok("Facture uploadée ✓"); cls();
+      } catch(e){ err("Erreur upload : "+e.message); }
+      setUploading(false);
+    };
+    return <Ovl onClose={cls}>
+      <MH title="📎 Ajouter une facture" onClose={cls}/>
+      <p style={{fontSize:13,color:"#6b7280",marginBottom:16}}>
+        Commande du <strong>{dfmt(cmd.date)}</strong> — {eur(cmd.total)}
+      </p>
+      <input ref={fileRef3} type="file" accept=".pdf,.png,.jpg,.jpeg" style={{display:"none"}} onChange={e=>setFile(e.target.files[0])}/>
+      <div style={{border:"2px dashed #d1d5db",borderRadius:9,padding:"24px",textAlign:"center",marginBottom:16,cursor:"pointer",background:"#fafafa"}} onClick={()=>fileRef3.current?.click()}>
+        {file
+          ? <div><div style={{fontSize:24,marginBottom:6}}>📄</div><div style={{fontWeight:600,color:"#16a34a"}}>{file.name}</div><div style={{fontSize:12,color:"#9ca3af",marginTop:4}}>{Math.round(file.size/1024)} Ko</div></div>
+          : <div><div style={{fontSize:32,marginBottom:8}}>📂</div><div style={{fontWeight:600,color:"#374151"}}>Cliquer pour choisir</div><div style={{fontSize:12,color:"#9ca3af",marginTop:4}}>PDF, PNG, JPG acceptés</div></div>}
+      </div>
+      <Btn onClick={upload} style={{opacity:(!file||uploading)?.5:1}}>
+        {uploading?"Envoi en cours...":"📤 Envoyer la facture"}
+      </Btn>
+    </Ovl>;
+  };
+
+  const MImport = () => (
+    <Ovl onClose={cls}>
+      <MH title="📥 Import Capsule CRM" onClose={cls}/>
+      <p style={{fontSize:13,color:"#6b7280",lineHeight:1.7,marginBottom:16}}>
+        Importez votre export CSV depuis Capsule.<br/>
+        <strong style={{color:"#16a34a"}}>Capsule → Settings → Export → Contacts → CSV</strong>
+      </p>
+      {prog?(
+        <div>
+          <div style={{fontSize:13,color:"#374151",marginBottom:9}}>{prog.done} / {prog.total} lignes traitées</div>
+          <div style={{height:8,background:"#f3f4f6",borderRadius:4}}>
+            <div style={{height:"100%",width:Math.round(prog.done/prog.total*100)+"%",background:"#16a34a",borderRadius:4,transition:"width .2s"}}/>
+          </div>
+          <div style={{fontSize:13,color:"#16a34a",fontWeight:600,marginTop:8}}>{prog.imp} contacts importés...</div>
+        </div>
+      ):(
+        <>
+          <input ref={fRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&importCSV(e.target.files[0])}/>
+          <Btn onClick={()=>fRef.current?.click()}>📂 Choisir le fichier CSV</Btn>
+        </>
+      )}
+    </Ovl>
+  );
+
+  // ── NAV ─────────────────────────────────────────────────────────────────────
+  const nav = [
+    {id:"dash",     lbl:"Tableau de bord", ico:"📊"},
+    {id:"clients",  lbl:"Clients",         ico:"👥"},
+    {id:"commandes",lbl:"Commandes",       ico:"📦"},
+    {id:"relances", lbl:"Relances",        ico:"📅"},
+    {id:"produits", lbl:"Produits",        ico:"🌿"},
+    {id:"params",   lbl:"Paramètres",      ico:"⚙️"},
+  ];
+
+  const addBtns = {
+    clients:   [{lbl:"Importer CSV",v:"s",fn:()=>setModal({t:"import"})},{lbl:"+ Nouveau client",v:"p",fn:()=>setModal({t:"cnew"})}],
+    commandes: [{lbl:"+ Nouvelle commande",v:"p",fn:()=>setModal({t:"cmd"})}],
+    relances:  [{lbl:"+ Nouvelle relance",v:"p",fn:()=>setModal({t:"rel",d:{}})}],
+  };
+
+  return (
+    <div style={{display:"flex",minHeight:"100vh",background:"#f5f6fa"}}>
+
+      {/* Sidebar */}
+      <nav style={{width:220,minWidth:220,background:"#fff",borderRight:"1px solid #e5e7eb",display:"flex",flexDirection:"column",boxShadow:"1px 0 4px rgba(0,0,0,.04)"}}>
+        <div style={{padding:"22px 18px 16px",borderBottom:"1px solid #f3f4f6"}}>
+          <div style={{fontSize:18,fontWeight:800,color:"#16a34a"}}>🌿 Jungle Feed</div>
+          <div style={{fontSize:10,color:"#9ca3af",fontWeight:600,textTransform:"uppercase",letterSpacing:1.5,marginTop:3}}>CRM Commercial</div>
+        </div>
+        <div style={{marginTop:10,flex:1}}>
+          {nav.map(n=>(
+            <div key={n.id} onClick={()=>setPg(n.id)}
+              style={{display:"flex",alignItems:"center",gap:9,padding:"10px 18px",cursor:"pointer",
+                borderRadius:"0 20px 20px 0",marginRight:12,marginTop:2,
+                background:pg===n.id?"#f0fdf4":"transparent",
+                color:pg===n.id?"#16a34a":"#374151",
+                fontWeight:pg===n.id?700:500,fontSize:13,
+                borderLeft:pg===n.id?"3px solid #16a34a":"3px solid transparent"}}>
+              <span>{n.ico}</span>{n.lbl}
+              {n.id==="relances"&&urgents.length>0&&
+                <span style={{marginLeft:"auto",background:"#dc2626",color:"#fff",borderRadius:"50%",
+                  width:17,height:17,display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:10,fontWeight:800}}>{urgents.length}</span>}
+            </div>
+          ))}
+        </div>
+        <div style={{padding:"0 14px 16px"}}>
+          <div style={{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:9,padding:"10px 13px",marginBottom:8}}>
+            <div style={{fontSize:10,color:"#6b7280",fontWeight:600,textTransform:"uppercase",letterSpacing:.8}}>CA du jour</div>
+            <div style={{fontSize:20,fontWeight:800,color:"#16a34a"}}>{eur(caJour)}</div>
+          </div>
+          <Btn v="s" onClick={load} style={{width:"100%",justifyContent:"center",fontSize:12}}>↻ Actualiser</Btn>
+        </div>
+      </nav>
+
+      {/* Main */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{padding:"14px 26px",borderBottom:"1px solid #e5e7eb",display:"flex",alignItems:"center",
+          justifyContent:"space-between",background:"#fff",flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+          <div style={{fontSize:19,fontWeight:800,color:"#111827"}}>{nav.find(n=>n.id===pg)?.lbl}</div>
+          <div style={{display:"flex",alignItems:"center",gap:9}}>
+            {(pg==="clients"||pg==="commandes")&&(
+              <div style={{display:"flex",alignItems:"center",gap:7,background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"7px 12px"}}>
+                <span style={{fontSize:13,color:"#9ca3af"}}>🔍</span>
+                <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Rechercher..."
+                  style={{background:"none",border:"none",outline:"none",color:"#111827",fontSize:13,width:180}}/>
+              </div>
+            )}
+            {(addBtns[pg]||[]).map((b,i)=><Btn key={i} v={b.v} onClick={b.fn}>{b.lbl}</Btn>)}
+          </div>
+        </div>
+        <div style={{padding:"22px 26px",overflowY:"auto",flex:1}}>
+          {pg==="dash"      && <Dash/>}
+          {pg==="clients"   && <PageClients/>}
+          {pg==="commandes" && <PageCmds/>}
+          {pg==="relances"  && <PageRels/>}
+          {pg==="produits"  && <PageProds/>}
+          {pg==="params"    && <PageParams/>}
+        </div>
+      </div>
+
+      {/* Modales */}
+      {modal?.t==="cnew"           && <MClientNew/>}
+      {modal?.t==="cmd"            && <MCmdNew/>}
+      {modal?.t==="rel"            && <MRelNew/>}
+      {modal?.t==="cdet"           && <MCDet/>}
+      {modal?.t==="import"         && <MImport/>}
+      {modal?.t==="upload_facture" && <MUploadFacture/>}
+
+      {/* Toast */}
+      {toast&&(
+        <div style={{position:"fixed",bottom:24,right:24,
+          background:toast.t==="err"?"#fef2f2":"#f0fdf4",
+          border:`1px solid ${toast.t==="err"?"#fca5a5":"#86efac"}`,
+          borderRadius:9,padding:"12px 18px",fontSize:13,fontWeight:600,
+          color:toast.t==="err"?"#dc2626":"#16a34a",
+          zIndex:9999,boxShadow:"0 4px 16px rgba(0,0,0,.1)"}}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
